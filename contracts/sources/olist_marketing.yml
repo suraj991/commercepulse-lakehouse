@@ -1,0 +1,85 @@
+source:
+  name: olist_marketing_qualified_leads
+  file: data/raw/olist/olist_marketing_qualified_leads_dataset.csv
+  grain: one row per mql_id
+  row_count: 8000   # measured 2026-10-10
+  primary_key: [mql_id]
+  pk_unique: true
+
+  columns:
+    - name: mql_id
+      type: string
+      nullable: false
+    - name: first_contact_date
+      type: date
+      nullable: false
+      date_range: ["2017-06-05", "2018-06-05"]
+    - name: landing_page_id
+      type: string
+      nullable: false
+    - name: origin
+      type: string
+      nullable: false
+      description: Lead acquisition channel (organic_search, paid_search, social, etc.)
+
+---
+
+source:
+  name: olist_closed_deals
+  file: data/raw/olist/olist_closed_deals_dataset.csv
+  grain: one row per mql_id
+  row_count: 842   # measured 2026-10-10
+  primary_key: [mql_id]
+  pk_unique: true
+
+  columns:
+    - name: mql_id
+      type: string
+      nullable: false
+    - name: seller_id
+      type: string
+      nullable: true
+      description: Links to olist_sellers; null if seller not yet in sellers table
+    - name: sdr_id
+      type: string
+      nullable: true
+    - name: sr_id
+      type: string
+      nullable: true
+    - name: won_date
+      type: timestamp
+      nullable: false
+    - name: business_segment
+      type: string
+      nullable: true
+    - name: lead_type
+      type: string
+      nullable: true
+    - name: lead_behaviour_profile
+      type: string
+      nullable: true
+    - name: has_company
+      type: boolean
+      nullable: true
+    - name: has_gtin
+      type: boolean
+      nullable: true
+    - name: average_stock
+      type: string
+      nullable: true
+    - name: business_type
+      type: string
+      nullable: true
+    - name: declared_product_catalog_size
+      type: float
+      nullable: true
+    - name: declared_monthly_revenue
+      type: float
+      nullable: true
+
+  foreign_keys:
+    - column: mql_id
+      references: olist_marketing_qualified_leads_dataset.mql_id
+    - column: seller_id
+      references: olist_sellers_dataset.seller_id
+      note: Some closed deals do not have a matching seller_id in the sellers table

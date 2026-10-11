@@ -1,0 +1,21 @@
+source:
+  name: olist_sellers
+  file: data/raw/olist/olist_sellers_dataset.csv
+  grain: one row per seller_id
+  row_count: 3095   # measured 2026-10-10
+  primary_key: [seller_id]
+  pk_unique: true
+
+  columns:
+    - name: seller_id
+      type: string
+      nullable: false
+    - name: seller_zip_code_prefix
+      type: string
+      nullable: false
+    - name: seller_city
+      type: string
+      nullable: false
+    - name: seller_state
+      type: string
+      nullable: false

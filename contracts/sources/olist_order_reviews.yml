@@ -1,0 +1,43 @@
+source:
+  name: olist_order_reviews
+  file: data/raw/olist/olist_order_reviews_dataset.csv
+  grain: "WARNING: review_id is NOT unique. 814 duplicate review_ids across 99224 rows."
+  row_count: 99224   # measured 2026-10-10
+  primary_key: [review_id]
+  pk_unique: false
+  pk_dup_count: 814   # measured
+
+  profiling_note: |
+    review_id has 814 duplicates. The safe grain is (review_id, order_id).
+    fct_reviews must deduplicate before joining to orders to avoid fan-out.
+    Strategy: keep the row with the most recent review_answer_timestamp;
+    if tie, keep max(review_score).
+
+  columns:
+    - name: review_id
+      type: string
+      nullable: false
+      description: NOT globally unique – 814 duplicates observed
+    - name: order_id
+      type: string
+      nullable: false
+    - name: review_score
+      type: integer
+      nullable: false
+      accepted_values: [1, 2, 3, 4, 5]
+    - name: review_comment_title
+      type: string
+      nullable: true
+    - name: review_comment_message
+      type: string
+      nullable: true
+    - name: review_creation_date
+      type: timestamp
+      nullable: false
+    - name: review_answer_timestamp
+      type: timestamp
+      nullable: false
+
+  foreign_keys:
+    - column: order_id
+      references: olist_orders_dataset.order_id

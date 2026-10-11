@@ -1,0 +1,41 @@
+source:
+  name: olist_order_items
+  file: data/raw/olist/olist_order_items_dataset.csv
+  grain: one row per (order_id, order_item_id)
+  row_count: 112650   # measured 2026-10-10
+  primary_key: [order_id, order_item_id]
+  pk_unique: true
+
+  columns:
+    - name: order_id
+      type: string
+      nullable: false
+    - name: order_item_id
+      type: integer
+      nullable: false
+      description: Sequential item number within an order (1-based)
+    - name: product_id
+      type: string
+      nullable: false
+    - name: seller_id
+      type: string
+      nullable: false
+    - name: shipping_limit_date
+      type: timestamp
+      nullable: false
+    - name: price
+      type: float
+      nullable: false
+      description: Item price in BRL (excludes freight)
+    - name: freight_value
+      type: float
+      nullable: false
+      description: Freight cost in BRL for this item
+
+  foreign_keys:
+    - column: order_id
+      references: olist_orders_dataset.order_id
+    - column: seller_id
+      references: olist_sellers_dataset.seller_id
+    - column: product_id
+      references: olist_products_dataset.product_id

@@ -1,0 +1,53 @@
+source:
+  name: olist_orders
+  file: data/raw/olist/olist_orders_dataset.csv
+  grain: one row per order_id
+  row_count: 99441   # measured 2026-10-10
+  primary_key: [order_id]
+  pk_unique: true    # 99441 distinct / 99441 rows
+
+  columns:
+    - name: order_id
+      type: string
+      nullable: false
+      description: Unique order identifier
+    - name: customer_id
+      type: string
+      nullable: false
+      description: FK to olist_customers_dataset.customer_id
+    - name: order_status
+      type: string
+      nullable: false
+      accepted_values:
+        - delivered
+        - shipped
+        - canceled
+        - unavailable
+        - invoiced
+        - processing
+        - created
+        - approved
+    - name: order_purchase_timestamp
+      type: timestamp
+      nullable: false
+      date_range: ["2016-09-04", "2018-10-17"]
+    - name: order_approved_at
+      type: timestamp
+      nullable: true
+      null_count: 160
+    - name: order_delivered_carrier_date
+      type: timestamp
+      nullable: true
+      null_count: 1783
+    - name: order_delivered_customer_date
+      type: timestamp
+      nullable: true
+      null_count: 2965
+    - name: order_estimated_delivery_date
+      type: timestamp
+      nullable: false
+
+  foreign_keys:
+    - column: customer_id
+      references: olist_customers_dataset.customer_id
+      orphan_count: 0   # measured

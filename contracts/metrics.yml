@@ -1,0 +1,139 @@
+# CommercePulse – Metric Contracts
+# Every metric must have: owner, definition, source_tables, grain, exclusions,
+# freshness_target, and version. Build marts after declaring these.
+
+version: "1.0"
+owner: suraj_joshi
+last_updated: "2026-10-10"
+
+metrics:
+
+  - name: fulfilled_gmv
+    version: 1
+    owner: suraj_joshi
+    description: >
+      Sum of item price (excluding freight) for orders in 'delivered' status.
+      GMV is gross merchandise value — the value of merchandise sold to customers.
+      It is NOT revenue (which would net returns/refunds) and NOT profit.
+    formula: "SUM(item.price) WHERE order.order_status = 'delivered'"
+    source_tables:
+      - olist_orders_dataset
+      - olist_order_items_dataset
+    grain: one row per (business_date, optional dimension cuts)
+    exclusions:
+      - freight_value is excluded (freight is cost, not merchandise sold)
+      - canceled, unavailable, invoiced, processing, created, approved orders are excluded
+      - orders with null order_delivered_customer_date are excluded from delivered count
+    currency: BRL (add USD conversion via dim_fx_rate using latest rate on or before business_date)
+    freshness_target: daily, T+1 by 08:00 BRT
+    mart: marts/fct_orders.sql
+    resume_claim: "Computed fulfilled GMV from 99k+ orders with currency conversion"
+
+  - name: payment_reconciliation
+    version: 1
+    owner: suraj_joshi
+    description: >
+      Per-order comparison of total payment value vs. sum of (item price + freight_value)
+      for all items in that order. Mismatches are surfaced as data quality issues;
+      they are NOT hidden or silently zeroed. This metric reports the gap.
+    formula: |
+      payment_total = SUM(payments.payment_value) GROUP BY order_id
+      item_total    = SUM(items.price + items.freight_value) GROUP BY order_id
+      gap           = payment_total - item_total
+    source_tables:
+      - olist_order_payments_dataset
+      - olist_order_items_dataset
+    grain: one row per order_id
+    exclusions:
+      - Only orders present in both payments AND items tables
+      - canceled orders included (they may have partial payments)
+    status_rules:
+      - delivered: expect gap ≈ 0 (tolerance ±0.01 BRL for rounding)
+      - canceled: gap may be non-zero; report but do not fail quality gate
+      - other statuses: report gap; do not block publication
+    freshness_target: daily, T+1 by 08:00 BRT
+    mart: marts/fct_payments.sql
+    resume_claim: "Payment reconciliation with mismatch reporting per order"
+
+  - name: seller_conversion
+    version: 1
+    owner: suraj_joshi
+    description: >
+      Ratio of closed deals to qualified leads within the marketing funnel sample,
+      broken down by origin channel (lead acquisition source).
+      Numerator: count of mql_ids with a matching row in olist_closed_deals.
+      Denominator: count of all mql_ids in olist_marketing_qualified_leads.
+    formula: "COUNT(closed.mql_id) / COUNT(leads.mql_id) GROUP BY leads.origin"
+    source_tables:
+      - olist_marketing_qualified_leads_dataset
+      - olist_closed_deals_dataset
+    grain: one row per origin channel
+    exclusions:
+      - mql_ids in closed_deals with no matching leads row are excluded from denominator
+        (they cannot be attributed to a channel)
+    note: >
+      This dataset is a sample (8,000 leads, 842 deals). Conversion rates reflect
+      the sample, not the full Olist population.
+    freshness_target: weekly (static dataset – recompute on pipeline run)
+    mart: marts/fct_seller_leads.sql
+    resume_claim: "Seller conversion funnel by origin channel"
+
+  - name: seller_gmv_attribution
+    version: 1
+    owner: suraj_joshi
+    description: >
+      GMV attributed to each seller based only on items that seller fulfilled.
+      A multi-seller order is split: each seller gets credit for their own items only.
+      Never credit the full order value to each seller (that would overcount).
+    formula: "SUM(items.price) WHERE order.order_status = 'delivered' GROUP BY items.seller_id"
+    source_tables:
+      - olist_orders_dataset
+      - olist_order_items_dataset
+    grain: one row per (seller_id, business_date or cohort period)
+    exclusions:
+      - freight_value excluded (same as fulfilled_gmv)
+      - non-delivered orders excluded
+      - fan-out prevention: aggregate items to order+seller grain before joining dim_seller_history
+    scd2_join: >
+      Join to dim_seller_history using order_purchase_timestamp BETWEEN valid_from AND valid_to
+      to get the seller's tier/state at the time of the order.
+    freshness_target: daily, T+1 by 08:00 BRT
+    mart: marts/fct_order_items.sql
+    resume_claim: "Per-seller GMV with SCD2 seller dimension join"
+
+  - name: observed_demand
+    version: 1
+    owner: suraj_joshi
+    description: >
+      Item quantity ordered by (business_date, product_category_english, seller_id, order_status),
+      with boolean flags for cancellation and late delivery.
+      "Observed demand" — what customers placed orders for — includes canceled orders.
+      It is distinct from fulfilled_gmv which only counts delivered orders.
+    formula: |
+      SELECT
+        DATE(o.order_purchase_timestamp)   AS business_date,
+        pt.product_category_name_english   AS category_english,
+        oi.seller_id,
+        o.order_status,
+        COUNT(oi.order_item_id)            AS items_ordered,
+        SUM(oi.price)                      AS gross_item_value_brl,
+        MAX(CASE WHEN o.order_status = 'canceled' THEN 1 ELSE 0 END) AS is_canceled,
+        MAX(CASE
+          WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date THEN 1
+          ELSE 0 END)                      AS is_late_delivery
+      FROM olist_order_items oi
+      JOIN olist_orders o USING (order_id)
+      JOIN olist_products p USING (product_id)
+      LEFT JOIN product_category_name_translation pt USING (product_category_name)
+      GROUP BY 1, 2, 3, 4
+    source_tables:
+      - olist_orders_dataset
+      - olist_order_items_dataset
+      - olist_products_dataset
+      - product_category_name_translation
+    grain: one row per (business_date, category_english, seller_id, order_status)
+    exclusions:
+      - geolocation table is not joined (no fan-out risk, but not needed for this metric)
+    freshness_target: daily, T+1 by 08:00 BRT
+    mart: marts/fct_order_items.sql
+    resume_claim: "Demand analysis by category, seller, status with cancellation/late flags"

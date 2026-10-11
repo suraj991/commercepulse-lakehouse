@@ -1,0 +1,26 @@
+source:
+  name: olist_customers
+  file: data/raw/olist/olist_customers_dataset.csv
+  grain: one row per customer_id; customer_unique_id groups repeat buyers
+  row_count: 99441   # measured 2026-10-10
+  primary_key: [customer_id]
+  pk_unique: true
+
+  columns:
+    - name: customer_id
+      type: string
+      nullable: false
+      description: Session-level customer ID (one per order)
+    - name: customer_unique_id
+      type: string
+      nullable: false
+      description: Persistent buyer identifier – use this to group repeat purchases
+    - name: customer_zip_code_prefix
+      type: string
+      nullable: false
+    - name: customer_city
+      type: string
+      nullable: false
+    - name: customer_state
+      type: string
+      nullable: false

@@ -1,0 +1,37 @@
+source:
+  name: olist_products
+  file: data/raw/olist/olist_products_dataset.csv
+  grain: one row per product_id
+  row_count: 32951   # measured 2026-10-10
+  primary_key: [product_id]
+  pk_unique: true
+
+  columns:
+    - name: product_id
+      type: string
+      nullable: false
+    - name: product_category_name
+      type: string
+      nullable: true
+      description: Portuguese category name; join product_category_name_translation for English
+    - name: product_name_lenght
+      type: float
+      nullable: true
+    - name: product_description_lenght
+      type: float
+      nullable: true
+    - name: product_photos_qty
+      type: float
+      nullable: true
+    - name: product_weight_g
+      type: float
+      nullable: true
+    - name: product_length_cm
+      type: float
+      nullable: true
+    - name: product_height_cm
+      type: float
+      nullable: true
+    - name: product_width_cm
+      type: float
+      nullable: true

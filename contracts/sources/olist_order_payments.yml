@@ -1,0 +1,31 @@
+source:
+  name: olist_order_payments
+  file: data/raw/olist/olist_order_payments_dataset.csv
+  grain: one row per (order_id, payment_sequential)
+  row_count: 103886   # measured 2026-10-10
+  primary_key: [order_id, payment_sequential]
+  pk_unique: true
+
+  columns:
+    - name: order_id
+      type: string
+      nullable: false
+    - name: payment_sequential
+      type: integer
+      nullable: false
+      description: Sequential payment number for split payments (1-based)
+    - name: payment_type
+      type: string
+      nullable: false
+      accepted_values: [credit_card, boleto, voucher, debit_card, not_defined]
+    - name: payment_installments
+      type: integer
+      nullable: false
+    - name: payment_value
+      type: float
+      nullable: false
+      description: Payment amount in BRL
+
+  foreign_keys:
+    - column: order_id
+      references: olist_orders_dataset.order_id
