@@ -48,7 +48,15 @@ select
     fx.brl_to_usd,
     case
         when fx.brl_to_usd is not null
-        then (coalesce(i.gmv_brl, 0.0) * fx.brl_to_usd)::decimal(14, 4)
+        -- Cast both operands to DECIMAL(18,6) before multiplying so the
+        -- multiplication is exact decimal arithmetic in both DuckDB and
+        -- Snowflake — avoids IEEE 754 half-unit rounding divergence when
+        -- DECIMAL(14,2) * FLOAT lands on a boundary at the 4th decimal place.
+        then round(
+            cast(coalesce(i.gmv_brl, 0.0) as decimal(18, 6))
+            * cast(fx.brl_to_usd            as decimal(18, 6)),
+            2
+        )::decimal(14, 2)
     end as gmv_usd,
 
     -- Delivery status flags

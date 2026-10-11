@@ -26,7 +26,7 @@ products as (
         product_id as primary_product_id
     from {{ ref('stg_order_items') }}
     group by order_id, product_id
-    qualify row_number() over (partition by order_id order by count(*) desc) = 1
+    qualify row_number() over (partition by order_id order by count(*) desc, product_id asc) = 1
 {% else %}
     select
         order_id,
@@ -66,6 +66,8 @@ select
         else 0.0
     end::decimal(14, 2)     as fulfilled_gmv_brl,
 
+    p.primary_product_id,
+
     -- Demand flags
     case when o.order_status = 'canceled' then 1 else 0 end as is_canceled,
 
@@ -76,6 +78,7 @@ select
 
 from agg a
 join orders o using (order_id)
+left join products p using (order_id)
 -- SCD2 join: seller attributes valid at time of order
 left join sellers s
     on  a.seller_id  = s.seller_id

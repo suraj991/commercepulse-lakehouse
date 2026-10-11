@@ -102,20 +102,37 @@ would take minutes and hammer network round-trips. COPY INTO is the standard pro
 ## 4. How Parity Was Proven
 
 Parity means the Snowflake tables contain exactly the same data as the DuckDB ground truth.
-We proved it with `scripts/parity_check.py`, which:
+We proved it with `scripts/parity_check.py` (14 metrics total, zero tolerance on all):
 
-1. Opens DuckDB (`data/commercepulse.duckdb`) and runs six SQL queries.
-2. Connects to Snowflake with the same RSA key-pair auth and runs the equivalent six queries
-   against `analytics.*` (the dbt-built mart tables).
-3. Compares row counts with `==` and monetary values with `abs(diff) <= 0.01 BRL` tolerance
-   (to account for any floating-point rounding in transit).
-4. Prints PASS or FAIL per metric and exits with code 0 only if all pass.
+| Metric | DuckDB | Snowflake |
+|--------|--------|-----------|
+| fct_orders rows | 99,441 | 99,441 |
+| fct_order_items rows | 100,010 | 100,010 |
+| fct_payments rows | 99,441 | 99,441 |
+| fct_seller_leads rows | 10 | 10 |
+| Fulfilled GMV BRL (delivered) | R$13,220,248.93 | R$13,220,248.93 |
+| Total GMV BRL | R$13,591,643.70 | R$13,591,643.70 |
+| Total GMV USD | $4,050,149.75 | $4,050,149.75 |
+| NULL gmv_usd count | 0 | 0 |
+| dim_fx_rate rows | 852 | 852 |
+| dim_fx_rate min date | 2016-09-01 | 2016-09-01 |
+| dim_fx_rate max date | 2018-12-31 | 2018-12-31 |
+| dim_fx_rate calendar gaps | 0 | 0 |
+| fct_order_items row MD5 | 7fb78c631ad3… | 7fb78c631ad3… |
+| primary_product_id mismatches | 0 | 0 |
 
-All six metrics matched to the cent. This proves that:
-- The staging macros (`raw_source()`) read the same underlying data on both platforms.
-- The SQL compatibility fixes (date spine, LATERAL join replacement, MODE substitute) produce
-  numerically identical results.
-- No rows were dropped or duplicated during the PUT + COPY INTO load.
+The script:
+1. Opens DuckDB (`data/commercepulse.duckdb`) and runs scalar SQL queries.
+2. Connects to Snowflake with RSA key-pair auth and runs equivalent queries against `analytics.*`.
+3. Fetches all rows from `fct_order_items`, normalises monetary columns to 2dp, sorts by
+   `(order_id, seller_id)`, and computes an MD5 checksum — catching any value-level divergence
+   that row-count checks would miss.
+4. Counts `(order_id, seller_id)` pairs where `primary_product_id` differs — verifying that
+   the `ROW_NUMBER()` MODE substitute uses the same deterministic tie-break rule as DuckDB's
+   `mode() within group (order by product_id)`.
+5. Exits 0 only if all metrics pass with tolerance = 0.00.
+
+The USD match was only achievable after fixing the FLOAT rounding bug (see Bug 5 above).
 
 ---
 
@@ -168,7 +185,45 @@ on a `GROUP BY order_id, product_id` sub-query. `QUALIFY` is a Snowflake (and la
 extension that filters on window function results without a subquery wrapper — this produced
 identical output with a clean, readable pattern.
 
-### Bug 5 – dbt-snowflake not in system Python path
+### Bug 5 – `gmv_usd` drifted by 0.16 USD across 1,557 rows due to FLOAT half-unit rounding divergence
+
+**Symptom**: After extending `scripts/parity_check.py` to compare `SUM(gmv_usd)`, DuckDB
+reported **4,050,148.81** and Snowflake **4,050,148.65** — a gap of **0.16 USD**. Row-level
+inspection found exactly **1,557 rows** where `gmv_usd` differed by exactly **0.0001**
+(one unit at the 4th decimal place), always with DuckDB higher than Snowflake.
+
+**Root cause**: The original formula was:
+```sql
+(coalesce(i.gmv_brl, 0.0) * fx.brl_to_usd)::decimal(14, 4)
+```
+`brl_to_usd` is stored as IEEE 754 `FLOAT` in both engines. When multiplying
+`DECIMAL(14,2) × FLOAT`, the intermediate result is a `DOUBLE`. For roughly 1.6% of orders,
+the product fell on a **half-unit boundary at the 4th decimal place** — e.g.,
+`37.20845000000000…` (representable in float as `37.204449999999998`). DuckDB's
+`DOUBLE → DECIMAL` cast rounds that value **up** (to `37.2085`); Snowflake's rounds it
+**down** (to `37.2084`). Both behaviors are valid under IEEE 754 — neither engine is wrong —
+but they diverge, and the difference accumulates to 0.1557 USD across 99,441 rows.
+
+**Fix** (`warehouse/dbt/models/marts/fct_orders.sql`): Cast both operands to `DECIMAL(18,6)`
+before multiplying, then apply `ROUND(..., 2)` per row:
+```sql
+then round(
+    cast(coalesce(i.gmv_brl, 0.0) as decimal(18, 6))
+    * cast(fx.brl_to_usd            as decimal(18, 6)),
+    2
+)::decimal(14, 2)
+```
+`DECIMAL × DECIMAL` is exact decimal arithmetic (no IEEE 754 ambiguity). `ROUND` to 2 places
+is then exact and deterministic in both engines. After this fix,
+`parity_check.py` passes `total_gmv_usd` with **tolerance = 0.00** — both engines return
+**4,050,149.75** identically. The column type changed from `DECIMAL(14,4)` to `DECIMAL(14,2)`
+to reflect that USD values are reported to the cent, not to 0.0001 USD.
+
+**Lesson**: any column produced by multiplying a DECIMAL by a FLOAT is at risk of an
+engine-specific rounding divergence at the boundary. The invariant is: *if two platforms must
+agree exactly, perform the multiplication entirely in DECIMAL arithmetic*.
+
+### Bug 6 – dbt-snowflake not in system Python path
 **Symptom**: Homebrew `dbt` (the system PATH binary) was installed in homebrew's Python
 environment and had dbt-duckdb but not dbt-snowflake. After installing dbt-snowflake into the
 project venv, `dbt debug --target snowflake` from the homebrew binary errored with
