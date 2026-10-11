@@ -28,7 +28,8 @@
 | Canceled orders | 625 | DuckDB query | `fct_orders.order_status` |
 | Cross-grain GMV reconciliation | R$0.00 difference | DuckDB query joining fct_orders to fct_order_items | `assert_gmv_reconciliation.sql` test |
 | Payment reconciliation rate | 98.92% (98,365 of 99,441) reconcile within R$0.01 | DuckDB query | `fct_payments.is_reconciled` |
-| Unreconciled orders (source gaps) | 1,076 (0.31% of delivered; < 5% threshold → WARN) | DuckDB query | `scripts/quality_gate.py` |
+| Unreconciled orders — delivered only (quality gate) | 300/96,470 delivered (0.31%) have gap > 0.01 BRL → WARN | DuckDB query | `scripts/quality_gate.py` |
+| Unreconciled orders — all statuses | 1,076/99,441 total orders (1.08% total) not reconciled | DuckDB query | `fct_payments.is_reconciled = false` |
 | Payment gap range (source data) | min=R$0.02, max=R$182.81, median=R$5.90 | DuckDB percentile query | Session measurement |
 | SCD2 sellers | 3,095 sellers, 0 overlapping validity periods | DuckDB + `assert_scd2_no_overlap.sql` | `dim_seller_history` |
 | SCD2 surrogate key method | md5(seller_id) | `warehouse/dbt/models/dimensions/dim_seller_history.sql:4` | Source code |
@@ -50,6 +51,14 @@
 | Distinct customer states in gold | 27 | DuckDB query | `count(distinct customer_state) from fct_orders` |
 | CI checks per PR | 9 steps across 2 jobs (unit-tests + dbt-validate) | `.github/workflows/ci.yml` | File |
 
+| Snowflake raw schema load (11 tables) | 10 Parquet + 1 FX table; rows match bronze | `scripts/load_snowflake.py`, 2026-10-11 | Snowflake `COUNT(*)` verification |
+| Snowflake dbt build | 81/81 tests pass (18 models) | `dbt build --target snowflake`, 2026-10-11 | dbt output |
+| Snowflake parity — fct_orders | 99,441 rows, R$13,220,248.93 GMV | `scripts/parity_check.py`, 2026-10-11 | `parity_check.py` ALL PASS |
+| Snowflake parity — fct_order_items | 100,010 rows | `scripts/parity_check.py`, 2026-10-11 | `parity_check.py` ALL PASS |
+| Snowflake parity — fulfilled GMV | R$13,220,248.93 (exact match to BRL cent) | `scripts/parity_check.py`, 2026-10-11 | `parity_check.py` ALL PASS |
+| SQL compat fixes (DuckDB → Snowflake) | 5 fixes: read_parquet macro, read_json_auto, date spine, LATERAL join, MODE() WITHIN GROUP | code review, 2026-10-11 | `warehouse/dbt/macros/raw_source.sql`, model edits |
+| RSA key-pair auth (Snowflake) | No password; PEM → DER → snowflake.connector.connect | `scripts/load_snowflake.py`, `scripts/parity_check.py` | Python cryptography library |
+
 ---
 
 ## What Is NOT Claimed (Honest Gaps)
@@ -63,4 +72,4 @@
 | `fct_seller_leads` | ✅ COMPLETE | Ran in Airflow dbt_build; uniqueness bug fixed (GROUP BY coalesce) |
 | Silver reject tables | 0 ROWS | Source data was clean; reject tables exist but are empty |
 | End-to-end wall-clock time | ✅ MEASURED (2026-10-11) | 52m 1s with retries; ~15 min happy-path |
-| Cloud run (Phase 8) | NOT STARTED | Requires explicit AWS/Snowflake auth |
+| Cloud run (Phase 8) | ✅ COMPLETE (2026-10-11) | Snowflake: 81/81 dbt tests, parity ALL PASS |

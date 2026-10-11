@@ -19,6 +19,15 @@ orders as (
     from {{ ref('stg_orders') }}
 ),
 products as (
+{% if target.type == 'snowflake' %}
+    -- Snowflake: mode via QUALIFY + ROW_NUMBER (MODE WITHIN GROUP not supported)
+    select
+        order_id,
+        product_id as primary_product_id
+    from {{ ref('stg_order_items') }}
+    group by order_id, product_id
+    qualify row_number() over (partition by order_id order by count(*) desc) = 1
+{% else %}
     select
         order_id,
         -- Most common product category in this order+seller combination
@@ -26,6 +35,7 @@ products as (
         mode() within group (order by product_id) as primary_product_id
     from {{ ref('stg_order_items') }}
     group by order_id
+{% endif %}
 ),
 sellers as (
     select * from {{ ref('dim_seller_history') }}

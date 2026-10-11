@@ -116,7 +116,7 @@ Bugs fixed during this run:
 | 2026-10-10 | Publication (`scripts/publish.py`) | publication_id: 471b3257-1dfd-45a1-82a5-82a9bb6715c9 |
 
 Quality gate findings:
-- payment_reconciliation: ⚠️ 300/96,470 delivered orders (0.31%) have gap > 0.01 BRL (known Olist source issue; rate < 5% threshold → WARN not FAIL)
+- payment_reconciliation: ⚠️ 300/96,470 delivered orders (0.31% of delivered) have gap > 0.01 BRL; 1,076/99,441 total orders (1.08% total) are unreconciled across all statuses (known Olist source characteristic; delivered-order rate < 5% threshold → WARN not FAIL)
 - fulfilled_gmv: ✅ 96,470 delivered orders, R$13,220,248.93 total fulfilled GMV
 - scd2_uniqueness: ✅ all 3,095 seller_sk values unique
 
@@ -147,6 +147,64 @@ _Results will be written here after Phase 10 executes._
 
 ---
 
-## Cloud (Phase 8 – deferred)
+## Phase 8 (Snowflake cloud layer) – 2026-10-11
 
-Cloud jobs not yet authorized. All cloud metrics: **not measured**.
+### Connection & Setup
+| Step | Result |
+|------|--------|
+| Connection test (Python + RSA key-pair) | ('DBT_USER', 'TRANSFORMER', 'COMMERCEPULSE_WH') – PASS |
+| dbt debug --target snowflake | All checks passed |
+| dbt-snowflake version | 1.12.0 (matches dbt-core 1.12.5) |
+| Warehouse | COMMERCEPULSE_WH, X-Small |
+
+### Raw Schema Load (Snowflake)
+| Table | Rows Loaded |
+|-------|-------------|
+| raw.orders | 99,441 |
+| raw.order_items | 112,650 |
+| raw.order_payments | 103,886 |
+| raw.order_reviews | 99,224 |
+| raw.customers | 99,441 |
+| raw.sellers | 3,095 |
+| raw.products | 32,951 |
+| raw.product_category_translations | 71 |
+| raw.mql | 8,000 |
+| raw.closed_deals | 842 |
+| raw.fx_rates | 555 (unique trading days) |
+
+Load method: PUT Parquet to internal stage `@raw.parquet_stage`, COPY INTO with MATCH_BY_COLUMN_NAME.
+FX rates loaded via direct INSERT from parsed JSON cache (555 unique trading days).
+
+### dbt Build on Snowflake
+| Date | Step | Models | Tests | Duration | Result |
+|------|------|--------|-------|----------|--------|
+| 2026-10-11 | `dbt build --target snowflake` | 18 models (12 views + 6 tables) | 81 tests | 11.01s | 81/81 pass ✅ |
+| 2026-10-11 | `dbt build --target local` (regression) | 18 models | 81 tests | 1.78s | 81/81 pass ✅ |
+
+SQL compatibility fixes made (DuckDB → Snowflake):
+- All staging models: `read_parquet(...)` → `raw_source()` macro (reads `raw.<table>` on Snowflake)
+- `stg_fx_rates`: `read_json_auto(...)` → `raw.fx_rates` table (Snowflake target conditional)
+- `dim_fx_rate`: `unnest(range(...))` date spine → `TABLE(GENERATOR(ROWCOUNT => 1096))` with `DATEADD`
+- `fct_orders`: `LEFT JOIN LATERAL ... LIMIT 1` → direct join on `rate_date = order_date` (valid after forward-fill)
+- `fct_order_items`: `MODE() WITHIN GROUP (ORDER BY ...)` → `QUALIFY ROW_NUMBER() OVER (...) = 1`
+
+### Parity Check (DuckDB vs Snowflake)
+| Metric | DuckDB | Snowflake | Status |
+|--------|--------|-----------|--------|
+| fct_orders row count | 99,441 | 99,441 | PASS |
+| fct_order_items row count | 100,010 | 100,010 | PASS |
+| fct_payments row count | 99,441 | 99,441 | PASS |
+| fct_seller_leads row count | 10 | 10 | PASS |
+| fulfilled_gmv (is_delivered=1) | R$13,220,248.93 | R$13,220,248.93 | PASS |
+| total_gmv (all orders) | R$13,591,643.70 | R$13,591,643.70 | PASS |
+
+**Overall parity: ALL PASS** — Snowflake matches DuckDB ground truth exactly.
+
+### Credits
+- Warehouse: COMMERCEPULSE_WH (X-Small, 1 credit/hour)
+- Estimated active time: ~15 min (connection + load + 2× dbt build + parity check)
+- Estimated credits: ~0.25 (X-Small = 1 credit/hr; transformer role cannot access ACCOUNT_USAGE)
+- Note: exact credit data unavailable — transformer role lacks ACCOUNT_USAGE privilege; sysadmin would need to grant it.
+
+### Warehouse suspended after run
+`ALTER WAREHOUSE commercepulse_wh SUSPEND` — executed at end of session.

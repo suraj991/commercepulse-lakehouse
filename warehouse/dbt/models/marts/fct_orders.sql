@@ -4,6 +4,10 @@
 -- Freight is excluded from GMV by definition.
 -- FX conversion: uses the latest cached BRL→USD rate on or before the order date.
 -- gmv_usd is NULL when no rate is available (run `make backfill-fx`).
+--
+-- DuckDB: LATERAL join with ORDER BY + LIMIT 1 (efficient correlated lookup)
+-- Snowflake: direct join on rate_date = order_date (dim_fx_rate already forward-fills
+--            every calendar day within the covered range, making a direct join equivalent)
 with
 orders as (
     select * from {{ ref('stg_orders') }}
@@ -40,7 +44,7 @@ select
     coalesce(i.gmv_brl,     0.0) as gmv_brl,
     coalesce(i.freight_brl, 0.0) as freight_brl,
 
-    -- FX: latest rate on or before order_date via LATERAL
+    -- FX: latest rate on or before order_date
     fx.brl_to_usd,
     case
         when fx.brl_to_usd is not null
@@ -62,6 +66,11 @@ select
 from orders o
 left join items_per_order i using (order_id)
 left join customers       c using (customer_id)
+{% if target.type == 'snowflake' %}
+-- Snowflake: direct join — dim_fx_rate is already forward-filled for every calendar day
+left join {{ ref('dim_fx_rate') }} as fx
+    on fx.rate_date = date_trunc('day', o.order_purchase_timestamp)::date
+{% else %}
 left join lateral (
     select brl_to_usd
     from {{ ref('dim_fx_rate') }}
@@ -69,3 +78,4 @@ left join lateral (
     order by rate_date desc
     limit 1
 ) as fx on true
+{% endif %}

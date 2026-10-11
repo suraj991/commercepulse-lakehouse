@@ -7,4 +7,4 @@ select
     order_delivered_carrier_date::timestamp    as order_delivered_carrier_date,
     order_delivered_customer_date::timestamp   as order_delivered_customer_date,
     order_estimated_delivery_date::timestamp   as order_estimated_delivery_date
-from read_parquet('{{ var("gold_input_dir") }}/orders/*/data.parquet')
+from {{ raw_source('orders') }}

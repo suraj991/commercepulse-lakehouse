@@ -74,3 +74,8 @@ data/publications/
 data/iceberg_warehouse/
 data/gold_input/
 lakehouse/jars/*.jar
+
+# Snowflake RSA key (stored outside repo, but guard the path reference too)
+*.p8
+*.p12
+*.pem

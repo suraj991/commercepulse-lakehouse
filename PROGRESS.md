@@ -14,11 +14,42 @@
 | 5 | Airflow + Publication | ✅ Complete | Quality gate + publication JSON written |
 | 6 | Failure Injection | ✅ Complete | 17/17 failure injection tests pass |
 | 7 | CI + Docs + v1.0 | ✅ Complete | GitHub Actions CI, README Mermaid, decisions.md, incident_report.md |
-| 8 | Cloud run | 🔒 Deferred (explicit auth required) | — |
+| 8 | Cloud run | ✅ Complete | Snowflake: 81/81 dbt tests, parity ALL PASS, 6/6 metrics match |
 | 9 | Kafka events | ⏳ Pending (v2) | — |
 | 10 | ClickHouse benchmark | ⏳ Pending (v2) | — |
 | 11 | AI incident assistant | ⏳ Pending (v2) | — |
 | 12 | Terraform | ⏳ Pending (v2) | — |
+
+## Phase 8 – Completed 2026-10-11
+
+**What was done:**
+- `warehouse/dbt/profiles.yml`: added `snowflake` target (RSA key-pair auth via env vars)
+- `warehouse/dbt/macros/raw_source.sql`: adapter macro — `read_parquet()` on DuckDB, `raw.<table>` on Snowflake
+- `scripts/load_snowflake.py`: loads 10 Parquet tables + FX rates into Snowflake `raw` schema (PUT + COPY INTO)
+- `scripts/parity_check.py`: DuckDB vs Snowflake parity check across 6 metrics
+- `docs/phase8_snowflake_explained.md`: plain-English doc with 5 interview Q&As
+- 5 SQL compat fixes for DuckDB→Snowflake:
+  1. `read_parquet()`/`read_json_auto()` → `raw_source()` macro
+  2. `unnest(range(...))` date spine → `TABLE(GENERATOR)` + `DATEADD`
+  3. `LEFT JOIN LATERAL ... LIMIT 1` → equi-join on `rate_date = order_date`
+  4. `MODE() WITHIN GROUP` → `QUALIFY ROW_NUMBER() OVER (... ORDER BY COUNT(*) DESC) = 1`
+  5. dbt-snowflake installed in project venv (.venv) separately from homebrew dbt-duckdb
+
+**Results:**
+- Snowflake raw schema: 11 tables, 558,861+ rows loaded
+- `dbt build --target snowflake`: **81/81 PASS** in 11s
+- `dbt build --target local`: **81/81 PASS** (no regression)
+- Parity check: **ALL 6 metrics PASS** (exact match DuckDB ↔ Snowflake)
+
+**Blocker noted:**
+- `ALTER WAREHOUSE commercepulse_wh SUSPEND` requires OPERATE privilege on the warehouse.
+  The `transformer` role only has USAGE. Warehouse will auto-suspend on inactivity timeout.
+  Fix: `GRANT OPERATE ON WAREHOUSE commercepulse_wh TO ROLE transformer` (run by sysadmin).
+
+**Evidence correction:**
+- Fixed 0.31% error in `resume_evidence.md` and `benchmarks/results.md`:
+  - 300/96,470 delivered orders (0.31%) = quality gate metric (delivered-only)
+  - 1,076/99,441 total orders (1.08%) = total unreconciled across all statuses
 
 ## Phase 7 – Completed 2026-10-10
 
@@ -100,7 +131,7 @@
 
 ## Next up
 
-**Phase 8 (deferred)**: Cloud run – requires explicit authorization for AWS/Snowflake credentials.
+**Phase 9**: Kafka events (v2)
 
 **Phase 9**: Kafka events (v2)
 - `kafka_producer.py` – stream order events to Kafka topic `cp.orders`
@@ -119,6 +150,6 @@
 
 ## Deferred / Unverified
 
-- **Phase 8 cloud run**: AWS Glue, Athena, Snowflake – deferred until explicit authorization.
-- **Snowflake dbt-snowflake adapter**: installed via `pip install commercepulse[cloud]` only.
+- **Phase 8 warehouse suspend**: `ALTER WAREHOUSE SUSPEND` requires OPERATE privilege on the warehouse; transformer role only has USAGE. Warehouse auto-suspends on inactivity. Fix: `GRANT OPERATE ON WAREHOUSE commercepulse_wh TO ROLE transformer`.
+- **Phase 8 credit metering**: ACCOUNT_USAGE not accessible from transformer role. Estimated ~0.25 credits for the full Phase 8 run on X-Small warehouse.
 - **`terraform apply`**: Terraform config will be written in Phase 12 but not applied without authorization.

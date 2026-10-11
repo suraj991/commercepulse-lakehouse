@@ -4,4 +4,4 @@ select
     customer_zip_code_prefix,
     customer_city,
     customer_state
-from read_parquet('{{ var("gold_input_dir") }}/customers/*/data.parquet')
+from {{ raw_source('customers') }}

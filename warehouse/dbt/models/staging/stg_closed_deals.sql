@@ -13,4 +13,4 @@ select
     business_type,
     declared_product_catalog_size,
     declared_monthly_revenue
-from read_parquet('{{ var("gold_input_dir") }}/closed_deals/*/data.parquet')
+from {{ raw_source('closed_deals') }}
