@@ -1,0 +1,67 @@
+# Secrets
+.env
+*.env
+
+# Raw data (large CSV files – not committed)
+data/raw/
+data/external/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+.Python
+dist/
+build/
+*.egg-info/
+.eggs/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# dbt
+warehouse/dbt/target/
+warehouse/dbt/dbt_packages/
+warehouse/dbt/logs/
+
+# Spark / Java
+*.jar
+metastore_db/
+derby.log
+spark-warehouse/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Docker volumes (local mounts only)
+infra/volumes/
+
+# Airflow
+orchestration/logs/
+orchestration/plugins/
+
+# Terraform state (commit .tf files, not state)
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+
+# Benchmarks raw output (results.md is committed, raw logs are not)
+benchmarks/raw/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.venv/

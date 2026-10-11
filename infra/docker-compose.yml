@@ -1,0 +1,198 @@
+version: "3.9"
+
+# ─── Shared defaults ──────────────────────────────────────────────────────────
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.2-python3.11
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+    # MinIO / S3 for DAG tasks
+    MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    MINIO_BRONZE_BUCKET: ${MINIO_BRONZE_BUCKET:-cp-bronze}
+    MINIO_SILVER_BUCKET: ${MINIO_SILVER_BUCKET:-cp-silver}
+    MINIO_GOLD_BUCKET: ${MINIO_GOLD_BUCKET:-cp-gold}
+    # Postgres source
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${POSTGRES_DB:-commercepulse}
+    POSTGRES_USER: ${POSTGRES_USER:-cp_user}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+  volumes:
+    - ../orchestration/dags:/opt/airflow/dags
+    - ../orchestration/logs:/opt/airflow/logs
+    - airflow-plugins:/opt/airflow/plugins
+    - ../:/opt/commercepulse
+  depends_on:
+    airflow-db:
+      condition: service_healthy
+  networks:
+    - cp-net
+
+services:
+  # ── Core profile ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    profiles: [core, airflow, all]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-commercepulse}
+      POSTGRES_USER: ${POSTGRES_USER:-cp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cp_user} -d ${POSTGRES_DB:-commercepulse}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cp-net
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-01T01-11-10Z
+    profiles: [core, airflow, all]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cp-net
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-05-03T05-11-37Z
+    profiles: [core, airflow, all]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb -p local/cp-bronze &&
+        mc mb -p local/cp-silver &&
+        mc mb -p local/cp-gold &&
+        mc mb -p local/cp-fx-cache &&
+        echo 'Buckets created';
+      "
+    networks:
+      - cp-net
+
+  # ── Airflow profile ───────────────────────────────────────────────────────────
+  airflow-db:
+    image: postgres:16-alpine
+    profiles: [airflow, all]
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cp-net
+
+  airflow-init:
+    <<: *airflow-common
+    profiles: [airflow, all]
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create --username admin --password admin
+          --firstname Admin --lastname User --role Admin --email admin@example.com
+      "
+    restart: "no"
+
+  airflow-scheduler:
+    <<: *airflow-common
+    profiles: [airflow, all]
+    command: scheduler
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--limit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-webserver:
+    <<: *airflow-common
+    profiles: [airflow, all]
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Kafka profile (Phase 9) ───────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    profiles: [kafka, all]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - cp-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    profiles: [kafka, all]
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - cp-net
+
+  # ── ClickHouse profile (Phase 10) ─────────────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.4
+    profiles: [clickhouse, all]
+    ports:
+      - "8123:8123"
+      - "9009:9009"
+    volumes:
+      - ch-data:/var/lib/clickhouse
+    networks:
+      - cp-net
+
+volumes:
+  pg-data:
+  minio-data:
+  airflow-db-data:
+  airflow-plugins:
+  ch-data:
+
+networks:
+  cp-net:
+    driver: bridge
