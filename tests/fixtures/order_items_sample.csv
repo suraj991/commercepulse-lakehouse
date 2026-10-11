@@ -1,0 +1,8 @@
+order_id,order_item_id,product_id,seller_id,shipping_limit_date,price,freight_value
+ord001,1,prod001,seller001,2018-01-03 10:00:00,100.00,10.00
+ord001,2,prod002,seller001,2018-01-03 10:00:00,50.00,5.00
+ord002,1,prod003,seller002,2018-01-04 09:00:00,200.00,15.00
+ord003,1,prod001,seller001,2018-01-05 08:00:00,80.00,8.00
+ord004,1,prod004,seller003,2018-01-06 11:00:00,300.00,20.00
+ord004,2,prod005,seller002,2018-01-06 11:00:00,150.00,12.00
+ord005,1,prod001,seller001,2018-01-07 07:00:00,60.00,6.00

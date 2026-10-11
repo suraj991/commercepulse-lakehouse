@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ─── Shared defaults ──────────────────────────────────────────────────────────
 x-airflow-common: &airflow-common
   image: apache/airflow:2.9.2-python3.11
@@ -44,7 +42,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-cp_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
@@ -56,8 +54,9 @@ services:
       - cp-net
 
   minio:
-    image: minio/minio:RELEASE.2024-05-01T01-11-10Z
+    image: cleanstart/minio:latest
     profiles: [core, airflow, all]
+    user: root
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -68,15 +67,15 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
       - cp-net
 
   minio-init:
-    image: minio/mc:RELEASE.2024-05-03T05-11-37Z
+    image: pgsty/mc:latest
     profiles: [core, airflow, all]
     depends_on:
       minio:
