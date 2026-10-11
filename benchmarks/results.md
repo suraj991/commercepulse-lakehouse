@@ -65,9 +65,54 @@ Snapshot export: 7 tables → data/gold_input/ with manifest.json (checksums rec
 
 Stack: PySpark 4.0.1, Iceberg 1.12 (iceberg-spark-runtime-4.0_2.13-1.12.0.jar), Hadoop-AWS 3.4.1, AWS SDK v2 2.28.17
 
+## Phase 4 (dbt gold layer)
+
+| Date | Step | Models | Tests | Duration | Result |
+|------|------|--------|-------|----------|--------|
+| 2026-10-10 | `make dbt-build-core` | 14 models (7 stg views, 2 int views, 2 dim tables, 3 mart tables) | 66 tests | 1.12s | 66/66 pass ✅ |
+
+Custom singular tests:
+- `assert_no_fanout_order_items`: PASS — 0 rows returned (no fan-out duplicates)
+- `assert_gmv_reconciliation`: PASS — 0 orders exceed 0.01 BRL GMV gap
+- `assert_scd2_no_overlap`: PASS — 0 overlapping seller validity periods
+
+Notes:
+- `stg_mql`, `stg_closed_deals`, `stg_product_category_translations` require `make silver export-gold` re-run (tables added to SILVER_TABLES in Phase 4)
+- `dim_fx_rate`: 2 rows (only 2018-05-13 and 2018-05-15 cached); `gmv_usd` NULL for all orders until `make backfill-fx` runs
+- Stack: dbt-core 1.12.5, dbt-duckdb 1.11.0, DuckDB 1.5.6
+
+---
+
+## Phase 5 (Airflow orchestration + quality gate)
+
+| Date | Step | Result |
+|------|------|--------|
+| 2026-10-10 | Quality gate (`scripts/quality_gate.py`) | PASSED ✅ |
+| 2026-10-10 | Publication (`scripts/publish.py`) | publication_id: 471b3257-1dfd-45a1-82a5-82a9bb6715c9 |
+
+Quality gate findings:
+- payment_reconciliation: ⚠️ 300/96,470 delivered orders (0.31%) have gap > 0.01 BRL (known Olist source issue; rate < 5% threshold → WARN not FAIL)
+- fulfilled_gmv: ✅ 96,470 delivered orders, R$13,220,248.93 total fulfilled GMV
+- scd2_uniqueness: ✅ all 3,095 seller_sk values unique
+
+---
+
 ## Phase 6 (failure injection)
 
-_Results will be written here after `make test-failure` runs._
+| Date | Step | Tests | Duration | Result |
+|------|------|-------|----------|--------|
+| 2026-10-10 | `pytest tests/test_failure_injection.py -v` | 17 tests (8 scenarios, 17 assertions) | 2.62s | 17/17 pass ✅ |
+| 2026-10-10 | Full unit test suite (`-m "not integration"`) | 26 tests | 0.69s | 26/26 pass ✅ |
+
+Scenarios covered:
+1. Null PK injection: rejected with reason `null:order_id`
+2. Invalid enum injection: `order_status="refunded"` rejected
+3. Duplicate PK dedup: 1 row removed, 5 remain
+4. Bronze ledger idempotency: same run_id skipped, different run_ids both process
+5. Payment mismatch surfaced: gap detected, not zeroed
+6. Fan-out detection: direct join multiplies rows; pre-aggregation prevents it
+7. Quality gate threshold: 0.3% → warn; 10% → fail; 5% → pass (strict >)
+8. GMV cross-grain reconciliation: order grain = seller grain; injected mismatch detected
 
 ---
 

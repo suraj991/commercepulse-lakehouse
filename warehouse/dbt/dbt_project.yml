@@ -1,0 +1,34 @@
+name: commercepulse
+version: "1.0.0"
+config-version: 2
+
+profile: commercepulse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # Paths relative to warehouse/dbt/ (where `dbt` runs from).
+  # Override with --vars or env at CI time.
+  gold_input_dir: "../../data/gold_input"
+  fx_cache_dir: "../../data/fx_cache"
+
+models:
+  commercepulse:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    dimensions:
+      +materialized: table
+    marts:
+      +materialized: table

@@ -1,0 +1,69 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: >
+      One row per order. Fulfilled GMV in BRL and USD (when FX rate available).
+      Source of truth for the fulfilled_gmv metric (contracts/metrics.yml).
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: order_status
+        tests:
+          - not_null
+      - name: gmv_brl
+        tests:
+          - not_null
+      - name: is_delivered
+        tests:
+          - not_null
+
+  - name: fct_payments
+    description: >
+      One row per order. Reconciliation of payment total vs item+freight total.
+      Source of truth for the payment_reconciliation metric.
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: payment_gap_brl
+        tests:
+          - not_null
+      - name: is_reconciled
+        tests:
+          - not_null
+
+  - name: fct_order_items
+    description: >
+      One row per (order_id, seller_id). Pre-aggregated to prevent fan-out
+      on dim_seller_history join. Source for seller_gmv_attribution and
+      observed_demand metrics.
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+      - name: seller_id
+        tests:
+          - not_null
+      - name: fulfilled_gmv_brl
+        tests:
+          - not_null
+
+  - name: fct_seller_leads
+    description: >
+      One row per origin channel. Seller conversion funnel from MQL to closed deal.
+      Source for the seller_conversion metric.
+    columns:
+      - name: origin
+        tests:
+          - unique
+          - not_null
+      - name: total_leads
+        tests:
+          - not_null
+      - name: conversion_pct
+        tests:
+          - not_null

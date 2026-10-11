@@ -1,0 +1,11 @@
+commercepulse:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      # Path relative to warehouse/dbt/ where dbt runs.
+      path: "../../data/commercepulse.duckdb"
+      threads: 4
+      extensions:
+        - parquet
+        - json

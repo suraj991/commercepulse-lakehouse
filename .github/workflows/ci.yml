@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "phase-*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests (no Docker required)
+        run: pytest tests/ -v -m "not integration and not cloud and not slow" --tb=short
+
+  dbt-validate:
+    name: dbt Validate (DuckDB)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dbt + DuckDB adapter
+        run: pip install "dbt-core>=1.8" "dbt-duckdb>=1.8"
+
+      - name: dbt deps
+        run: dbt deps --profiles-dir .
+        working-directory: warehouse/dbt
+
+      - name: Create gold_input fixtures from CSVs
+        # Minimal Parquet fixtures so dbt staging models can resolve.
+        # Uses only the 7 tables already in gold_input (mql/deals/translations
+        # require a full pipeline run — excluded in CI via GOLD_INPUT_DIR override).
+        run: |
+          python - <<'EOF'
+          import pandas as pd, pathlib, os
+          # Write tiny fixture Parquets so dbt read_parquet() doesn't error.
+          tables = {
+              "orders": ["order_id","customer_id","order_status","order_purchase_timestamp",
+                         "order_approved_at","order_delivered_carrier_date",
+                         "order_delivered_customer_date","order_estimated_delivery_date"],
+              "order_items": ["order_id","order_item_id","product_id","seller_id",
+                              "shipping_limit_date","price","freight_value"],
+              "order_payments": ["order_id","payment_sequential","payment_type",
+                                 "payment_installments","payment_value"],
+              "customers": ["customer_id","customer_unique_id","customer_zip_code_prefix",
+                            "customer_city","customer_state"],
+              "sellers": ["seller_id","seller_zip_code_prefix","seller_city","seller_state"],
+              "products": ["product_id","product_category_name","product_name_lenght",
+                           "product_description_lenght","product_photos_qty","product_weight_g",
+                           "product_length_cm","product_height_cm","product_width_cm"],
+          }
+          for name, cols in tables.items():
+              d = pathlib.Path(f"data/gold_input/{name}/snapshot_ci")
+              d.mkdir(parents=True, exist_ok=True)
+              df = pd.DataFrame(columns=cols)
+              df.to_parquet(d / "data.parquet", index=False)
+          # FX cache: empty JSON glob => stg_fx_rates returns 0 rows (no error)
+          pathlib.Path("data/fx_cache/.gitkeep").touch()
+          print("CI fixtures written")
+          EOF
+
+      - name: dbt build (core models only, excluding unexported tables)
+        run: |
+          dbt build --profiles-dir . --target local \
+            --exclude stg_mql stg_closed_deals stg_product_category_translations fct_seller_leads
+        working-directory: warehouse/dbt
+        env:
+          # Paths relative to warehouse/dbt/
+          DBT_VARS: '{"gold_input_dir": "../../data/gold_input", "fx_cache_dir": "../../data/fx_cache"}'

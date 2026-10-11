@@ -16,33 +16,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ingestion.config import sha256_file
+from lakehouse.silver_job import SILVER_TABLES as _SILVER_TABLE_CONFIGS
+
 EXPORT_DIR = Path("data/gold_input")
 MANIFEST_PATH = EXPORT_DIR / "manifest.json"
 
-SILVER_TABLES = [
-    "orders",
-    "order_items",
-    "order_payments",
-    "order_reviews",
-    "customers",
-    "sellers",
-    "products",
-]
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+SILVER_TABLES = list(_SILVER_TABLE_CONFIGS.keys())
 
 
 def export_table(spark: Any, table_name: str) -> dict[str, Any]:
@@ -66,7 +52,7 @@ def export_table(spark: Any, table_name: str) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     parquet_path = out_dir / "data.parquet"
 
-    df = spark.table(full_name)
+    df = spark.table(full_name).cache()
     row_count = df.count()
 
     # Write as a single Parquet file (coalesce for determinism)
@@ -79,7 +65,7 @@ def export_table(spark: Any, table_name: str) -> dict[str, Any]:
         shutil.copy2(str(part_files[0]), str(parquet_path))
         shutil.rmtree(str(tmp_dir))
 
-    checksum = _sha256_file(parquet_path) if parquet_path.exists() else None
+    checksum = sha256_file(parquet_path) if parquet_path.exists() else None
     elapsed = time.monotonic() - t0
 
     return {

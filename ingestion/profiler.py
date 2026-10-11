@@ -108,9 +108,8 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def profile_table(path: Path, meta: dict[str, Any]) -> dict[str, Any]:
+def profile_table(df: pd.DataFrame, path: Path, meta: dict[str, Any]) -> dict[str, Any]:
     """Profile a single CSV and return a result dict with real numbers."""
-    df = pd.read_csv(path, low_memory=False)
     n_rows, n_cols = df.shape
     file_size_mb = path.stat().st_size / 1_048_576
 
@@ -293,10 +292,9 @@ def main() -> None:
     profiles: dict[str, dict] = {}
     for stem, df in dfs.items():
         meta = TABLE_META.get(stem, {"pk": [], "fk": {}, "date_cols": [], "grain": "unknown"})
-        # Re-read with path for sha256
         csv_path = data_dir / f"{stem}.csv"
         print(f"  Profiling {stem} ({len(df):,} rows) …")
-        profiles[stem] = profile_table(csv_path, meta)
+        profiles[stem] = profile_table(df, csv_path, meta)
 
     # FK orphan checks
     orphans: dict[str, dict] = {}

@@ -57,11 +57,24 @@ export-gold: ## Export silver Iceberg snapshot → Parquet for dbt
 	$(PYTHON) -m lakehouse.export_snapshot
 
 # ─── dbt ──────────────────────────────────────────────────────────────────────
-dbt-build: ## dbt build (DuckDB local)
+dbt-deps: ## Install dbt packages
+	cd warehouse/dbt && $(DBT) deps --profiles-dir .
+
+dbt-build-core: ## dbt build excluding tables that need silver re-export (mql, closed_deals, product_category_translations)
+	cd warehouse/dbt && $(DBT) build --profiles-dir . --target local \
+	  --exclude stg_mql stg_closed_deals stg_product_category_translations fct_seller_leads
+
+dbt-build: ## dbt build (DuckDB local) — requires full silver+export-gold first
 	cd warehouse/dbt && $(DBT) build --profiles-dir . --target local
+
+dbt-test: ## Run only dbt tests
+	cd warehouse/dbt && $(DBT) test --profiles-dir . --target local
 
 dbt-docs: ## Generate and serve dbt docs
 	cd warehouse/dbt && $(DBT) docs generate --profiles-dir . && $(DBT) docs serve
+
+backfill-fx: ## Backfill BRL/USD FX rates for the Olist date range (2016-2018)
+	$(PYTHON) scripts/backfill_fx.py
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 test: ## Run all tests
@@ -94,7 +107,7 @@ demo: ## Run full local demo: trace metric → inject bad data → publish block
 	$(PYTHON) scripts/demo.py
 
 # ─── Full local pipeline ──────────────────────────────────────────────────────
-pipeline: seed extract silver export-gold dbt-build ## Run the full local pipeline end-to-end
+pipeline: seed extract silver export-gold backfill-fx dbt-deps dbt-build ## Run the full local pipeline end-to-end
 
 # ─── Cleanup ─────────────────────────────────────────────────────────────────
 clean: ## Remove Python artifacts and dbt targets

@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: int_order_items_agg
+    description: >
+      Order items aggregated to (order_id, seller_id) grain.
+      Pre-aggregation prevents fan-out when joining to dim_seller_history.
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+      - name: seller_id
+        tests:
+          - not_null
+
+  - name: int_payment_totals
+    description: "Payments aggregated to order grain for reconciliation."
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: total_payment_brl
+        tests:
+          - not_null

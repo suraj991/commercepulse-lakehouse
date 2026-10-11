@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: dim_seller_history
+    description: >
+      SCD Type 2 seller dimension. One row per (seller_id, validity period).
+      Currently each seller has one record spanning [2000-01-01, 9999-12-31]
+      since the source snapshot has no change events.
+    columns:
+      - name: seller_sk
+        description: "Surrogate key: md5(seller_id). Stable across pipeline runs."
+        tests:
+          - unique
+          - not_null
+      - name: seller_id
+        tests:
+          - not_null
+      - name: valid_from
+        tests:
+          - not_null
+      - name: valid_to
+        tests:
+          - not_null
+      - name: is_current
+        tests:
+          - not_null
+
+  - name: dim_fx_rate
+    description: >
+      Daily BRL→USD rate forward-filled from Frankfurter JSON cache.
+      Sparse until `make backfill-fx` populates the full date range.
+    columns:
+      - name: rate_date
+        tests:
+          - unique
+          - not_null
+      - name: brl_to_usd
+        tests:
+          - not_null

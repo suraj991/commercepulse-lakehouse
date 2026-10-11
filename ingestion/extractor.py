@@ -30,11 +30,9 @@ from minio.error import S3Error
 from sqlalchemy import create_engine, text
 
 from ingestion.config import (
-    MINIO_ACCESS_KEY,
     MINIO_BRONZE_BUCKET,
-    MINIO_ENDPOINT,
-    MINIO_SECRET_KEY,
     POSTGRES_URL,
+    get_minio_client,
 )
 
 # ── Table extraction config ───────────────────────────────────────────────────
@@ -57,19 +55,9 @@ LEDGER_BUCKET = MINIO_BRONZE_BUCKET
 LEDGER_PREFIX = "_ledger/"
 
 
-def _get_minio_client() -> Minio:
-    endpoint = MINIO_ENDPOINT.replace("http://", "").replace("https://", "")
-    secure = MINIO_ENDPOINT.startswith("https://")
-    return Minio(endpoint, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=secure)
-
-
 def _ensure_bucket(client: Minio, bucket: str) -> None:
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
-
-
-def _hash_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _load_ledger(client: Minio) -> list[dict[str, Any]]:
@@ -125,16 +113,17 @@ def _write_parquet_to_minio(
     client: Minio,
     df: pd.DataFrame,
     object_key: str,
+    bucket: str = MINIO_BRONZE_BUCKET,
 ) -> tuple[int, str]:
-    """Write DataFrame as Parquet to MinIO. Returns (bytes, sha256)."""
-    table = pa.Table.from_pandas(df, preserve_index=False)
+    """Write DataFrame as Parquet to MinIO. Returns (byte_count, sha256)."""
+    arrow_table = pa.Table.from_pandas(df, preserve_index=False)
     buf = io.BytesIO()
-    pq.write_table(table, buf, compression="snappy")
+    pq.write_table(arrow_table, buf, compression="snappy")
     buf.seek(0)
     data = buf.read()
-    file_hash = _hash_bytes(data)
+    file_hash = hashlib.sha256(data).hexdigest()
     client.put_object(
-        MINIO_BRONZE_BUCKET,
+        bucket,
         object_key,
         io.BytesIO(data),
         length=len(data),
@@ -164,7 +153,7 @@ def extract(
 
     ts_start = datetime.now(timezone.utc)
     engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
-    client = _get_minio_client()
+    client = get_minio_client()
     _ensure_bucket(client, MINIO_BRONZE_BUCKET)
     ledger = _load_ledger(client)
 
@@ -181,7 +170,6 @@ def extract(
 
         schema, table, date_col = EXTRACT_TABLES[tbl_name]
 
-        # Idempotency: skip if already extracted in this run
         if _ledger_entry_exists(ledger, run_id, tbl_name):
             print(f"  ⏭️   {tbl_name}: already in ledger for run_id={run_id}, skipping")
             continue
@@ -190,7 +178,6 @@ def extract(
         df = _extract_table(engine, schema, table, date_col, start_date, end_date)
         n_rows = len(df)
 
-        # Build object key: bronze/<table>/<run_id>/data.parquet
         bounds_str = ""
         if start_date and end_date:
             bounds_str = f"_{start_date.isoformat()}_{end_date.isoformat()}"

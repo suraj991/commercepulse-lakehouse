@@ -23,10 +23,12 @@ from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import StringType, StructField, StructType, TimestampType
+from pyspark.sql.types import StringType
 
-from ingestion.config import MINIO_BRONZE_BUCKET, MINIO_ENDPOINT
+from ingestion.config import MINIO_BRONZE_BUCKET, get_minio_client
 from lakehouse.spark_session import get_spark
+
+SILVER_CATALOG = "local.silver"
 
 # ── Silver table definitions ───────────────────────────────────────────────────
 # (table_name, bronze_prefix, pk_cols, dedup_order_col, nullable_checks)
@@ -85,28 +87,40 @@ SILVER_TABLES: dict[str, dict[str, Any]] = {
         "not_null": ["product_id"],
         "accepted_values": {},
     },
+    "product_category_translations": {
+        "bronze_prefix": "bronze/product_category_translations/",
+        "pk": ["product_category_name"],
+        "dedup_order": None,
+        "not_null": ["product_category_name"],
+        "accepted_values": {},
+    },
+    "mql": {
+        "bronze_prefix": "bronze/mql/",
+        "pk": ["mql_id"],
+        "dedup_order": "first_contact_date",
+        "not_null": ["mql_id"],
+        "accepted_values": {},
+    },
+    "closed_deals": {
+        "bronze_prefix": "bronze/closed_deals/",
+        "pk": ["mql_id"],
+        "dedup_order": "won_date",
+        "not_null": ["mql_id"],
+        "accepted_values": {},
+    },
 }
 
 
-def _find_latest_bronze(spark: SparkSession, prefix: str, bucket: str) -> str | None:
-    """List objects with the given prefix and return the most recent path."""
-    endpoint_no_scheme = MINIO_ENDPOINT.replace("http://", "").replace("https://", "")
-    from minio import Minio
-    from ingestion.config import MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-
-    client = Minio(
-        endpoint_no_scheme,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=False,
-    )
+def _find_latest_bronze(prefix: str, bucket: str) -> str | None:
+    """Return the s3a path of the most recently modified Parquet under prefix."""
+    client = get_minio_client()
     objects = list(client.list_objects(bucket, prefix=prefix, recursive=True))
-    parquets = [o for o in objects if o.object_name.endswith(".parquet")]
-    if not parquets:
-        return None
-    # Sort by last_modified desc → newest file
-    parquets.sort(key=lambda o: o.last_modified, reverse=True)
-    return f"s3a://{bucket}/{parquets[0].object_name}"
+    parquets = sorted(
+        (o for o in objects if o.object_name.endswith(".parquet")),
+        key=lambda o: o.last_modified,
+        reverse=True,
+    )
+    return f"s3a://{bucket}/{parquets[0].object_name}" if parquets else None
 
 
 def _validate_and_split(
@@ -135,11 +149,7 @@ def _validate_and_split(
             )
 
     if not reject_conditions:
-        # No validation rules → all rows are valid
-        valid = df
-        schema = StructType([StructField("_reject_reason", StringType())])
-        reject = spark.createDataFrame([], schema)  # type: ignore[name-defined]
-        return valid, df.filter(F.lit(False))  # empty reject
+        return df, df.filter(F.lit(False))
 
     # Build reject reason: first non-null condition wins
     reason_expr = reject_conditions[0]
@@ -178,7 +188,7 @@ def _write_iceberg(
     table_name: str,
     schema_ns: str = "silver",
 ) -> None:
-    """Write df to local.{schema_ns}.{table_name} as Iceberg v2 (overwrite)."""
+    """Write df to {SILVER_CATALOG}.{table_name} as Iceberg v2 (overwrite)."""
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS local.{schema_ns}")
     full_name = f"local.{schema_ns}.{table_name}"
     df.writeTo(full_name).using("iceberg").tableProperty(
@@ -194,15 +204,16 @@ def process_table(
 ) -> dict[str, Any]:
     """Process one bronze table through silver. Returns stats dict."""
     t0 = time.monotonic()
-    bronze_path = _find_latest_bronze(spark, config["bronze_prefix"], MINIO_BRONZE_BUCKET)
+    bronze_path = _find_latest_bronze(config["bronze_prefix"], MINIO_BRONZE_BUCKET)
     if bronze_path is None:
         return {"table": table_name, "status": "skipped", "reason": "no bronze file"}
 
     print(f"  Reading {bronze_path} …")
-    df = spark.read.parquet(bronze_path)
+    df = spark.read.parquet(bronze_path).cache()
     bronze_count = df.count()
 
     valid, reject = _validate_and_split(df, table_name, config)
+    valid = valid.cache()
     valid_count = valid.count()
     reject_count = reject.count()
 
@@ -210,9 +221,7 @@ def process_table(
     deduped_count = deduped.count()
 
     if not dry_run:
-        # Write silver table
         _write_iceberg(spark, deduped, table_name)
-        # Write reject table if there are any rejects
         if reject_count > 0:
             _write_iceberg(spark, reject, f"{table_name}_rejects")
 
@@ -242,9 +251,10 @@ def lake_checks(spark: SparkSession, stats_list: list[dict[str, Any]]) -> list[s
         if stats["status"] != "ok":
             continue
         tbl = stats["table"]
-        full_name = f"local.silver.{tbl}"
+        full_name = f"{SILVER_CATALOG}.{tbl}"
         try:
-            silver_count = spark.table(full_name).count()
+            df = spark.table(full_name).cache()
+            silver_count = df.count()
         except Exception as e:
             failures.append(f"{tbl}: could not read silver table: {e}")
             continue
@@ -259,12 +269,10 @@ def lake_checks(spark: SparkSession, stats_list: list[dict[str, Any]]) -> list[s
         config = SILVER_TABLES.get(tbl, {})
         pk = config.get("pk", [])
         if pk:
-            df = spark.table(full_name)
             distinct_pk = df.select(*pk).distinct().count()
-            total = df.count()
-            if distinct_pk != total:
+            if distinct_pk != silver_count:
                 failures.append(
-                    f"{tbl}: PK not unique – {total - distinct_pk:,} duplicates"
+                    f"{tbl}: PK not unique – {silver_count - distinct_pk:,} duplicates"
                 )
 
     return failures
@@ -279,7 +287,7 @@ def demo_schema_evolution(spark: SparkSession) -> None:
     3. New snapshot ID (different)
     4. Read old snapshot (no _ingested_at column)
     """
-    tbl = "local.silver.sellers"
+    tbl = f"{SILVER_CATALOG}.sellers"
     try:
         # Before: note current snapshot
         history = spark.sql(f"SELECT snapshot_id, made_current_at FROM {tbl}.history").collect()
