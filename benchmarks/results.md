@@ -188,17 +188,30 @@ SQL compatibility fixes made (DuckDB → Snowflake):
 - `fct_orders`: `LEFT JOIN LATERAL ... LIMIT 1` → direct join on `rate_date = order_date` (valid after forward-fill)
 - `fct_order_items`: `MODE() WITHIN GROUP (ORDER BY ...)` → `QUALIFY ROW_NUMBER() OVER (...) = 1`
 
-### Parity Check (DuckDB vs Snowflake)
+### Parity Check (DuckDB vs Snowflake) — Extended, 14 metrics, tolerance = 0.00
+
 | Metric | DuckDB | Snowflake | Status |
 |--------|--------|-----------|--------|
 | fct_orders row count | 99,441 | 99,441 | PASS |
 | fct_order_items row count | 100,010 | 100,010 | PASS |
 | fct_payments row count | 99,441 | 99,441 | PASS |
 | fct_seller_leads row count | 10 | 10 | PASS |
-| fulfilled_gmv (is_delivered=1) | R$13,220,248.93 | R$13,220,248.93 | PASS |
-| total_gmv (all orders) | R$13,591,643.70 | R$13,591,643.70 | PASS |
+| fulfilled_gmv_brl (is_delivered=1) | R$13,220,248.93 | R$13,220,248.93 | PASS |
+| total_gmv_brl (all orders) | R$13,591,643.70 | R$13,591,643.70 | PASS |
+| total_gmv_usd (all orders) | $4,050,149.75 | $4,050,149.75 | PASS |
+| fct_orders NULL gmv_usd count | 0 | 0 | PASS |
+| dim_fx_rate row count | 852 | 852 | PASS |
+| dim_fx_rate min rate_date | 2016-09-01 | 2016-09-01 | PASS |
+| dim_fx_rate max rate_date | 2018-12-31 | 2018-12-31 | PASS |
+| dim_fx_rate calendar gaps | 0 | 0 | PASS |
+| fct_order_items row MD5 checksum | 7fb78c631ad3… | 7fb78c631ad3… | PASS |
+| primary_product_id mismatches | 0 | 0 | PASS |
 
-**Overall parity: ALL PASS** — Snowflake matches DuckDB ground truth exactly.
+**Overall parity: ALL PASS** — 14/14 metrics at zero tolerance.
+
+Additional fixes applied during extended parity work (2026-10-11):
+- `fct_orders.sql`: `DECIMAL(14,2) * FLOAT` → `CAST(... AS DECIMAL(18,6)) * CAST(... AS DECIMAL(18,6))` then `ROUND(..., 2)` — eliminated 1,557-row IEEE 754 half-unit rounding divergence (DuckDB vs Snowflake) that caused 0.16 USD total drift; gmv_usd type narrowed from `DECIMAL(14,4)` to `DECIMAL(14,2)`
+- `fct_order_items.sql`: added `product_id ASC` tie-breaker to `QUALIFY ROW_NUMBER()` ORDER BY; joined orphaned `products` CTE so `primary_product_id` actually appears in the output table
 
 ### Credits
 - Warehouse: COMMERCEPULSE_WH (X-Small, 1 credit/hour)
