@@ -65,3 +65,6 @@ benchmarks/raw/
 .vscode/
 *.swp
 .venv/
+data/iceberg_warehouse/
+data/gold_input/
+lakehouse/jars/*.jar

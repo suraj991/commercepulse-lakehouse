@@ -47,6 +47,24 @@ _Results will be written here after `make profile` runs._
 
 ---
 
+## Phase 3 (silver layer)
+
+| Date | Table | Bronze Rows | Valid | Rejected | Deduped | Duration |
+|------|-------|-------------|-------|----------|---------|----------|
+| 2026-10-10 | orders | 99,441 | 99,441 | 0 | 99,441 | 7.2s |
+| 2026-10-10 | order_items | 112,650 | 112,650 | 0 | 112,650 | 1.5s |
+| 2026-10-10 | order_payments | 103,886 | 103,886 | 0 | 103,886 | 1.1s |
+| 2026-10-10 | order_reviews | 99,224 | 99,224 | 0 | 99,224 | 1.3s |
+| 2026-10-10 | customers | 99,441 | 99,441 | 0 | 99,441 | 1.0s |
+| 2026-10-10 | sellers | 3,095 | 3,095 | 0 | 3,095 | 0.5s |
+| 2026-10-10 | products | 32,951 | 32,951 | 0 | 32,951 | 0.6s |
+
+Lake checks: **all passed** (550,688 rows, 7 tables)
+Schema evolution: sellers `_ingested_at` column added; old snapshot (5249430885397119951) confirmed no new column.
+Snapshot export: 7 tables → data/gold_input/ with manifest.json (checksums recorded)
+
+Stack: PySpark 4.0.1, Iceberg 1.12 (iceberg-spark-runtime-4.0_2.13-1.12.0.jar), Hadoop-AWS 3.4.1, AWS SDK v2 2.28.17
+
 ## Phase 6 (failure injection)
 
 _Results will be written here after `make test-failure` runs._
