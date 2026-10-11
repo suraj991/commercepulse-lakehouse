@@ -1,0 +1,46 @@
+FROM apache/airflow:2.9.2-python3.11
+
+# ── System deps: Java 17 for PySpark/Iceberg ─────────────────────────────────
+USER root
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openjdk-17-jre-headless \
+        procps && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Resolve JAVA_HOME at build time and expose it through an architecture-neutral
+# symlink so the image works on both amd64 and arm64.
+RUN java_home=$(dirname $(dirname $(readlink -f $(which java)))) && \
+    echo "JAVA_HOME=${java_home}" >> /etc/environment && \
+    echo "export JAVA_HOME=${java_home}" >> /etc/profile.d/java.sh && \
+    chmod +x /etc/profile.d/java.sh && \
+    ln -s "${java_home}" /opt/java
+
+ENV JAVA_HOME=/opt/java
+
+# ── Python packages ───────────────────────────────────────────────────────────
+USER airflow
+
+# Pin exact versions matching the host environment.
+# PySpark 4.0.x is required to match the Iceberg runtime JARs in lakehouse/jars/.
+RUN pip install --no-cache-dir --upgrade \
+    "pyspark>=4.0,<4.1" \
+    "dbt-core==1.12.5" \
+    "dbt-duckdb==1.11.0" \
+    "duckdb==1.5.6" \
+    "numpy>=1.26,<3" \
+    "pandas>=2.1,<3" \
+    "pyarrow>=14.0,<20" \
+    "psycopg2-binary>=2.9" \
+    "minio>=7.2" \
+    "boto3>=1.34" \
+    "httpx>=0.27" \
+    "tenacity>=8.2" \
+    "python-dotenv>=1.0" \
+    "structlog>=24.1" \
+    "click>=8.1" \
+    "rich>=13.7"
+
+# Make the mounted project root importable from any script.
+ENV PYTHONPATH=/opt/commercepulse

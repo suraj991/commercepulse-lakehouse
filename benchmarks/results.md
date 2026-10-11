@@ -85,6 +85,31 @@ Notes:
 
 ## Phase 5 (Airflow orchestration + quality gate)
 
+### Manual Airflow DAG run (2026-10-11, run_id: manual_run_20261010)
+
+All 7 tasks reached **success**:
+
+| Task | Attempts | Start (UTC) | End (UTC) | Duration |
+|------|----------|-------------|-----------|----------|
+| bronze_extract | 4 | 05:51:24 | 05:51:48 | 24s |
+| silver_job | 5 | 06:13:35 | 06:15:41 | 2m 6s |
+| export_snapshot | 1 | 06:15:41 | 06:16:17 | 36s |
+| backfill_fx | 1 | 06:16:18 | 06:28:10 | 11m 52s |
+| dbt_build | 5 | 06:43:17 | 06:43:23 | 6s |
+| quality_gate | 1 | 06:43:23 | 06:43:24 | <1s |
+| publish_report | 1 | 06:43:24 | 06:43:25 | <1s |
+
+**End-to-end wall-clock runtime: 52m 1s** (first task start to last task end, inclusive of retry wait times)
+**Happy-path runtime (no retries): ~15 min** (sum of successful task durations)
+
+Bugs fixed during this run:
+- `ingestion/extractor.py`: pandas 2.3 removed `Engine`/`Connection` from `pd.read_sql`; bypassed with `conn.execute(text(...))` + `pd.DataFrame(rows.mappings().all())`
+- `lakehouse/spark_session.py`: `Path.resolve()` inside Docker Desktop returned macOS host path via VirtioFS; fixed by removing `.resolve()`
+- `lakehouse/export_snapshot.py`: stale `snapshot_*` dirs caused duplicate Parquet reads by dbt; fixed with pre-write cleanup
+- `warehouse/dbt/models/staging/stg_fx_rates.sql`: weekend JSON files share `"date"` with their last trading day, causing uniqueness test failures; fixed with `SELECT DISTINCT`
+- `warehouse/dbt/models/marts/fct_seller_leads.sql`: `GROUP BY l.origin` vs `coalesce(l.origin, 'unknown')` produced two 'unknown' rows; fixed to `GROUP BY coalesce(l.origin, 'unknown')`
+- `orchestration/dags/dag_pipeline.py`: added `max_active_runs=1` to prevent concurrent scheduled catch-up runs competing for the DuckDB file lock
+
 | Date | Step | Result |
 |------|------|--------|
 | 2026-10-10 | Quality gate (`scripts/quality_gate.py`) | PASSED ✅ |

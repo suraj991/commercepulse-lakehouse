@@ -33,5 +33,5 @@ select
 
 from leads l
 left join deals d using (mql_id)
-group by l.origin
+group by coalesce(l.origin, 'unknown')
 order by total_leads desc

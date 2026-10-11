@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,13 @@ def export_table(spark: Any, table_name: str) -> dict[str, Any]:
     snapshot_id = history[0]["snapshot_id"]
     made_current_at = str(history[0]["made_current_at"])
 
+    # Remove stale snapshot dirs so the dbt `*/data.parquet` glob never returns duplicates.
+    table_dir = EXPORT_DIR / table_name
+    if table_dir.exists():
+        for old in table_dir.glob("snapshot_*"):
+            if old.is_dir():
+                shutil.rmtree(str(old))
+
     # Export path
     out_dir = EXPORT_DIR / table_name / f"snapshot_{snapshot_id}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +69,6 @@ def export_table(spark: Any, table_name: str) -> dict[str, Any]:
     tmp_dir = parquet_path.parent / "_tmp"
     part_files = list(tmp_dir.glob("part-*.parquet"))
     if part_files:
-        import shutil
         shutil.copy2(str(part_files[0]), str(parquet_path))
         shutil.rmtree(str(tmp_dir))
 
@@ -76,7 +83,7 @@ def export_table(spark: Any, table_name: str) -> dict[str, Any]:
         "row_count": row_count,
         "parquet_path": str(parquet_path),
         "sha256": checksum,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "elapsed_s": round(elapsed, 1),
     }
 
@@ -105,7 +112,7 @@ def export(tables: list[str] | None = None) -> dict[str, Any]:
             print(f"  ⚠️  {tbl}: {result['status']}")
 
     manifest = {
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "tables": results,
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, default=str))

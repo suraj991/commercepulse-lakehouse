@@ -18,8 +18,7 @@ import io
 import json
 import time
 import uuid
-from datetime import date, datetime, timezone
-from pathlib import Path
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pandas as pd
@@ -100,13 +99,17 @@ def _extract_table(
 ) -> pd.DataFrame:
     """Read a table (with optional date-bounded WHERE clause) from Postgres."""
     fqn = f'"{schema}"."{table}"'
-    if date_col and start_date and end_date:
-        query = text(
-            f"SELECT * FROM {fqn} "
-            f"WHERE {date_col} >= :start AND {date_col} < :end"
-        )
-        return pd.read_sql(query, engine, params={"start": start_date, "end": end_date})
-    return pd.read_sql(text(f"SELECT * FROM {fqn}"), engine)
+    # Use an explicit SQLAlchemy connection for pandas 2.3/SQLAlchemy 2 compatibility.
+    with engine.connect() as conn:
+        if date_col and start_date and end_date:
+            stmt = text(
+                f"SELECT * FROM {fqn} "
+                f"WHERE {date_col} >= :start AND {date_col} < :end"
+            )
+            rows = conn.execute(stmt, {"start": start_date, "end": end_date})
+        else:
+            rows = conn.execute(text(f"SELECT * FROM {fqn}"))
+        return pd.DataFrame(rows.mappings().all())
 
 
 def _write_parquet_to_minio(
@@ -151,7 +154,7 @@ def extract(
     if tables is None:
         tables = list(EXTRACT_TABLES.keys())
 
-    ts_start = datetime.now(timezone.utc)
+    ts_start = datetime.now(UTC)
     engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
     client = get_minio_client()
     _ensure_bucket(client, MINIO_BRONZE_BUCKET)
@@ -204,7 +207,7 @@ def extract(
             "object_key": object_key,
             "schema_version": schema_version,
             "columns": list(df.columns),
-            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "extracted_at": datetime.now(UTC).isoformat(),
             "elapsed_s": round(elapsed, 2),
         }
         _save_ledger_entry(client, ledger_entry)
@@ -217,7 +220,7 @@ def extract(
         )
 
     engine.dispose()
-    summary["completed_at"] = datetime.now(timezone.utc).isoformat()
+    summary["completed_at"] = datetime.now(UTC).isoformat()
     summary["total_rows"] = sum(r.get("row_count", 0) for r in summary["results"].values())
     return summary
 
@@ -233,7 +236,7 @@ def main() -> None:
     start_date = date.fromisoformat(args.start) if args.start else None
     end_date = date.fromisoformat(args.end) if args.end else None
 
-    print(f"Starting bronze extraction run …")
+    print("Starting bronze extraction run …")
     summary = extract(
         tables=args.table,
         start_date=start_date,

@@ -19,9 +19,7 @@ _JAR_DIR = Path(__file__).parent / "jars"
 _JARS = ",".join(str(p) for p in sorted(_JAR_DIR.glob("*.jar")))
 
 # Iceberg warehouse: local path for the REST/Hadoop catalog
-_ICEBERG_WAREHOUSE = str(
-    (Path(__file__).parent.parent / "data" / "iceberg_warehouse").resolve()
-)
+_ICEBERG_WAREHOUSE = str(Path(__file__).parent.parent / "data" / "iceberg_warehouse")
 
 
 def get_spark(

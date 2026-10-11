@@ -60,9 +60,15 @@ infra/terraform/.terraform.lock.hcl
 # Benchmarks raw output (results.md is committed, raw logs are not)
 benchmarks/raw/
 
+# Local runtime data
+data/*.duckdb
+data/fx_cache/
+data/publications/
+
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 .venv/
 data/iceberg_warehouse/

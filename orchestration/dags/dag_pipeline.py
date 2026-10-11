@@ -29,6 +29,7 @@ with DAG(
     schedule="0 6 * * *",          # 06:00 UTC daily
     start_date=datetime(2026, 10, 1),
     catchup=False,
+    max_active_runs=1,
     default_args=_default_args,
     tags=["commercepulse", "pipeline"],
     doc_md="""
